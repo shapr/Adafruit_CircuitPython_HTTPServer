@@ -63,19 +63,29 @@ class _HTTPRequest:
     _REQUEST_RE = re.compile(r"(\S+)\s+(\S+)\s")
 
     def __init__(
-        self, path: str = "", method: str = "", raw_request: bytes = None
+        self, path: str = "", method: str = "", raw_request: bytes = None, params: str = ""
     ) -> None:
+        self.params = ""
         if raw_request is None:
             self.path = path
             self.method = method
         else:
-            # Parse request data from raw request
-            match = self._REQUEST_RE.match(raw_request.decode("utf8"))
-            if match:
-                self.path = match.group(2)
-                self.method = match.group(1)
-            else:
-                raise ValueError("Unparseable raw_request:", raw_request)
+            request_text = raw_request.decode('utf-8')
+            first_line = request_text[:request_text.find('\n')]
+            try:
+                (self.method, self.path, _httpversion) = first_line.split() # we don't care about invalid requests, we just don't
+            except ValueError as e:
+                print(first_line)
+                raise
+            if self.path.find('?') > 0: # XXX why does __hash__ get called here or earlier?
+                (self.path, self.params) = self.path.split('?')
+                ps = self.params.split('&')
+                dict_params = {}
+                for p in ps:
+                    equals_index = p.find('=')
+                    k,v = (p[:equals_index],p[equals_index+1:]) # no maxsplit, argh!
+                    dict_params[k] = v
+                self.params = dict_params
 
     def __hash__(self) -> int:
         return hash(self.method) ^ hash(self.path)
@@ -84,7 +94,7 @@ class _HTTPRequest:
         return self.method == other.method and self.path == other.path
 
     def __repr__(self) -> str:
-        return f"_HTTPRequest(path={repr(self.path)}, method={repr(self.method)})"
+        return f"_HTTPRequest(path={repr(self.path)}, method={repr(self.method)}, params={repr(self.params)})"
 
 
 class MIMEType:
@@ -274,7 +284,7 @@ class HTTPServer:
         :param socket: An object that is a source of sockets. This could be a `socketpool`
           in CircuitPython or the `socket` module in CPython.
         """
-        self._buffer = bytearray(1024)
+        self._buffer = bytearray(2048)
         self.routes = {}
         self._socket_source = socket_source
         self._sock = None
@@ -322,7 +332,6 @@ class HTTPServer:
                     length, _ = conn.recvfrom_into(self._buffer)
                 except OSError:
                     continue
-
                 request = _HTTPRequest(raw_request=self._buffer[:length])
 
                 # If a route exists for this request, call it. Otherwise try to serve a file.
