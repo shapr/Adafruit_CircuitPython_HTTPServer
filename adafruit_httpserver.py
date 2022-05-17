@@ -58,11 +58,18 @@ HTTPStatus.INTERNAL_SERVER_ERROR = HTTPStatus(500, "Internal Server Error")
 """500 Internal Server Error"""
 
 
+def split_once(text, separator):
+    separator_index = text.find(separator)
+    if separator_index < 0:
+        return text, ""
+    return text[:separator_index], text[separator_index+1:]
+
+
 class _HTTPRequest:
     def __init__(
-        self, path: str = "", method: str = "", raw_request: bytes = None, params: str = ""
+        self, path: str = "", method: str = "", raw_request: bytes = None
     ) -> None:
-        self.params = ""
+        self.params = {}
         if raw_request is None:
             self.path = path
             self.method = method
@@ -75,15 +82,12 @@ class _HTTPRequest:
             except ValueError as exc:
                 raise ValueError("Unparseable raw_request: ", raw_request) from exc
 
-            if self.path.find('?') > 0: # XXX why does __hash__ get called here or earlier?
-                (self.path, self.params) = self.path.split('?')
-                ps = self.params.split('&')
-                dict_params = {}
-                for p in ps:
-                    equals_index = p.find('=')
-                    k,v = (p[:equals_index],p[equals_index+1:]) # no maxsplit, argh!
-                    dict_params[k] = v
-                self.params = dict_params
+            self.path, params_string = split_once(self.path, '?')
+            if not params_string:
+                return
+            for param in params_string.split('&'):
+                key, value = split_once(param, '=')
+                self.params[key] = value
 
     def __hash__(self) -> int:
         return hash(self.method) ^ hash(self.path)
@@ -92,6 +96,7 @@ class _HTTPRequest:
         return self.method == other.method and self.path == other.path
 
     def __repr__(self) -> str:
+        # pylint: disable=line-too-long
         return f"_HTTPRequest(path={repr(self.path)}, method={repr(self.method)}, params={repr(self.params)})"
 
 
@@ -274,7 +279,7 @@ class HTTPResponse:
 class HTTPServer:
     """A basic socket-based HTTP server."""
 
-    def __init__(self, socket_source: Any, buffer_size=1024: int) -> None:
+    def __init__(self, socket_source: Any, buffer_size=1024) -> None:
         # TODO: Use a Protocol for the type annotation.
         # The Protocol could be refactored from adafruit_requests.
         """Create a server, and get it ready to run.
